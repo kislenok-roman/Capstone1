@@ -1,0 +1,22 @@
+.prediction {
+    cursor: pointer;
+}
+
+.predict-place {
+    margin-top: 10px;
+    font-size: large;
+    margin-bottom: 20px;
+}
+
+.row.footer {
+    background-color: #efefef;
+    padding-top: 20px;
+    border-top: 1px solid lightgray;
+    margin-top: 20px;
+}
+
+.row.options {
+    margin-top: 20px
+}
+
+.checkbox, .radio {margin-left: 20px!important}
