@@ -1,0 +1,250 @@
+---
+title: "Capstone exploratory data analysis"
+author: "Roman Kislenok"
+date: "05.11.2014"
+output: html_document
+---
+
+In this document we describe exploratory analysis of English texts corpus from the Data Science Specialization Capstone Project.  
+
+## Exploring data
+```{r, cache=TRUE,echo=FALSE,results='hide'}
+suppressWarnings(twitter <- readLines("data/final/en_US/en_US.twitter.txt"))
+suppressWarnings(blogs <- readLines("data/final/en_US/en_US.blogs.txt"))
+suppressWarnings(news <- readLines("data/final/en_US/en_US.news.txt"))
+```
+```{r, results='hide',echo=FALSE}
+suppressPackageStartupMessages(require(data.table))
+suppressPackageStartupMessages(require(RWeka))
+```
+```{r, results='hide',echo=FALSE}
+processTexts <- function(texts) {
+    # We'll process not a whole text lines, but sentencies. 
+    # Just before dividing lines by sentencies we want to exclude text in brackets as different sentencies.
+    # I think that text in bracket can be out of context and can't be used in predicting by previous words. 
+    texts <- c(gsub("[(].+?[)]", "", texts), regmatches(texts, regexpr("[(].+?[)]", texts)))
+    
+    # Divide lines to sentencies:
+    texts <- unlist(strsplit(texts, "[!.?]"))
+    
+    #Exclude punctuation as it'll not help in predicting:
+    texts <- gsub("\\]", " ", gsub("\\[", " ", gsub("[…|•“”«!\"#&$%\\(\\)*+./:;<=>?@^_`\\{|\\}~,/\\-]", " ", texts)))
+    
+    #We don't want to predict numbers, but we can gain additional prediction power using placeholder for all numbers:
+    texts <- gsub("[0-9]+", " [number] ", texts)
+
+    # Clear whitespaces:
+    texts <- gsub("[ ]{2, }", " ", texts)
+    
+    texts
+}
+```
+We have three files with texts from different sources. Data obtaining and loading process fully described in *Avanced section* of this document.  
+```{r, cache=TRUE, fig.height=12}
+par(mfrow = c(4, 1))
+l1 <- c(length(twitter), length(news), length(blogs))
+names(l1) <- c("Twitter", "News", "Blogs")
+barplot(l1, main = "Texts (lines) per corpus")
+
+n1 <- unlist(lapply(twitter, nchar))
+n2 <- unlist(lapply(news, nchar))
+n3 <- unlist(lapply(blogs, nchar))
+boxplot(n1, main = "Letters per text (line) for Twitter", ylab = "Letters")
+boxplot(n2, main = "Letters per text (line) for News", ylab = "Letters")
+boxplot(n3, main = "Letters per text (line) for Blogs", ylab = "Letters")
+```
+
+Twitter has a lot more texts (`r length(twitter)`), but messages are restricted to 140 characters, `r round(mean(n1), 2)` on average.
+News and Blogs have a lot more characters (`r round(mean(n2), 2)` and `r round(mean(n3), 2)` on average respectively) and smaller corpus size (`r length(n2)` and `r length(n3)`).
+
+### Words
+For words statistics we will use relatively small sample size and process it to remove punctuation and split texts on sentences:
+```{r, cache=TRUE}
+set.seed(198609)
+max.size <- 10000
+twitter.sample <- processTexts(sample(twitter, max.size))
+news.sample <- processTexts(sample(news, max.size))
+blogs.sample <- processTexts(sample(blogs, max.size))
+```
+
+Function `processTexts` described extensively in *Advanced section*. 
+
+We want to be able to predict whether word is whole upper case (abbreviation), begin with capital letter or is common word. 
+For dictionary we'll use original text:
+```{r, cache=TRUE}
+words.twitter <- WordTokenizer(twitter.sample, control = Weka_control(dilimiters = " "))
+words.news <- WordTokenizer(news.sample, control = Weka_control(dilimiters = " "))
+words.blogs <- WordTokenizer(blogs.sample, control = Weka_control(dilimiters = " "))
+```
+
+Number of words per `r formatC(max.size, format = "d")` sampled documents:
+```{r}
+rbind(data.frame(stat = "Number of words", twitter = length(words.twitter), news = length(words.news), blogs = length(words.blogs)),
+      data.frame(stat = "Unique words", twitter = length(unique(words.twitter)), news = length(unique(words.news)), blogs = length(unique(words.blogs))))
+```
+
+Top 10 popular words for Twitter per `r formatC(max.size, format = "d")` sampled documents:
+```{r,cache=TRUE}
+dictionary.twitter <- data.table(Word = words.twitter)[Word != "[number]", list(amount = .N), by = Word][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount), 2))]
+
+dictionary.twitter[order(-amount)][1:10, list(Word, "Amount" = amount, "% of total" = p.amount, "Cumulative % of total" = pcum.amount)]
+```
+_Note here that using cased words in dictionary will allow us to predict that "I" should be capitalized_.
+
+Top 10 popular words in news:
+```{r,cache=TRUE}
+dictionary.news <- data.table(Word = words.news)[Word != "[number]", list(amount = .N), by = Word][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount), 2))]
+
+dictionary.news[order(-amount)][1:10, list(Word, "Amount" = amount, "% of total" = p.amount, "Cumulative % of total" = pcum.amount)]
+```
+
+Top 10 popular words in blogs:
+```{r,cache=TRUE}
+dictionary.blogs <- data.table(Word = words.blogs)[Word != "[number]", list(amount = .N), by = Word][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount), 2))]
+
+dictionary.blogs[order(-amount)][1:10, list(Word, "Amount" = amount, "% of total" = p.amount, "Cumulative % of total" = pcum.amount)]
+```
+_Note here that news have no "I" in top words as news are usually impersonal_.
+
+Here we provide different dictionary sizes including only popular words:
+```{r}
+data.table("Percent of words in dictionary" = c(25, 50, 75, 90),
+           "Twitter, words" = c(nrow(dictionary.twitter[pcum.amount < 25]), nrow(dictionary.twitter[pcum.amount < 50]), nrow(dictionary.twitter[pcum.amount < 75]), nrow(dictionary.twitter[pcum.amount < 90])),
+           "News, words" = c(nrow(dictionary.news[pcum.amount < 25]), nrow(dictionary.news[pcum.amount < 50]), nrow(dictionary.news[pcum.amount < 75]), nrow(dictionary.news[pcum.amount < 90])),
+           "Blogs, words" = c(nrow(dictionary.blogs[pcum.amount < 25]), nrow(dictionary.blogs[pcum.amount < 50]), nrow(dictionary.blogs[pcum.amount < 75]), nrow(dictionary.blogs[pcum.amount < 90])))
+```
+
+### N-grams
+To predict next word we would use bi- (frequency for pairs of words) and tri-grams (frequency for triplets of words). Sizes of this dictionaries is quite large and here we'll transform word to lowercase:
+```{r, cache=TRUE}
+twitter.sample <- tolower(twitter.sample)
+bi.twitter <- NGramTokenizer(twitter.sample, control = Weka_control(min = 2, max = 2, dilimiters = " "))
+tri.twitter <- NGramTokenizer(twitter.sample, control = Weka_control(min = 3, max = 3, dilimiters = " "))
+news.sample <- tolower(news.sample)
+bi.news <- NGramTokenizer(news.sample, control = Weka_control(min = 2, max = 2, dilimiters = " "))
+tri.news <- NGramTokenizer(news.sample, control = Weka_control(min = 3, max = 3, dilimiters = " "))
+blogs.sample <- tolower(blogs.sample)
+bi.blogs <- NGramTokenizer(blogs.sample, control = Weka_control(min = 2, max = 2, dilimiters = " "))
+tri.blogs <- NGramTokenizer(blogs.sample, control = Weka_control(min = 3, max = 3, dilimiters = " "))
+```
+
+Number of pairs and triplets:
+```{r}
+rbind(data.frame(stat = "Number of pairs", twitter = length(bi.twitter), news = length(bi.news), blogs = length(bi.blogs)),
+      data.frame(stat = "Unique pairs", twitter = length(unique(bi.twitter)), news = length(unique(bi.news)), blogs = length(unique(bi.blogs))),
+      data.frame(stat = "Number of triplets", twitter = length(tri.twitter), news = length(tri.news), blogs = length(tri.blogs)),
+      data.frame(stat = "Unique triplets", twitter = length(unique(tri.twitter)), news = length(unique(tri.news)), blogs = length(unique(tri.blogs))))
+      
+```
+
+Here we provide different dictionary sizes including only popular pairs:
+```{r}
+pairs.twitter <- data.table(pair = bi.twitter)[, list(amount = .N), by = pair][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+pairs.news <- data.table(pair = bi.news)[, list(amount = .N), by = pair][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+pairs.blogs <- data.table(pair = bi.blogs)[, list(amount = .N), by = pair][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+
+data.table("Percent of pairs in dictionary" = c(25, 50, 75, 90),
+           "Twitter, pairs" = c(nrow(pairs.twitter[pcum.amount < 25]), nrow(pairs.twitter[pcum.amount < 50]), nrow(pairs.twitter[pcum.amount < 75]), nrow(pairs.twitter[pcum.amount < 90])),
+           "News, pairs" = c(nrow(pairs.news[pcum.amount < 25]), nrow(pairs.news[pcum.amount < 50]), nrow(pairs.news[pcum.amount < 75]), nrow(pairs.news[pcum.amount < 90])),
+           "Blogs, pairs" = c(nrow(pairs.blogs[pcum.amount < 25]), nrow(pairs.blogs[pcum.amount < 50]), nrow(pairs.blogs[pcum.amount < 75]), nrow(pairs.blogs[pcum.amount < 90])))
+```
+
+Here we provide different dictionary sizes including only popular triplets:
+```{r}
+triplets.twitter <- data.table(triplet = tri.twitter)[, list(amount = .N), by = triplet][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+triplets.news <- data.table(triplet = tri.news)[, list(amount = .N), by = triplet][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+triplets.blogs <- data.table(triplet = tri.blogs)[, list(amount = .N), by = triplet][order(-amount), `:=`(p.amount = round(100 * amount / sum(amount), 2), pcum.amount = round(100 * cumsum(amount) / sum(amount)))]
+
+data.table("Percent of triplets in dictionary" = c(25, 50, 75, 90),
+           "Twitter, tri" = c(nrow(triplets.twitter[pcum.amount < 25]), nrow(triplets.twitter[pcum.amount < 50]), nrow(triplets.twitter[pcum.amount < 75]), nrow(triplets.twitter[pcum.amount < 90])),
+           "News, tri" = c(nrow(triplets.news[pcum.amount < 25]), nrow(triplets.news[pcum.amount < 50]), nrow(triplets.news[pcum.amount < 75]), nrow(triplets.news[pcum.amount < 90])),
+           "Blogs, tri" = c(nrow(triplets.blogs[pcum.amount < 25]), nrow(triplets.blogs[pcum.amount < 50]), nrow(triplets.blogs[pcum.amount < 75]), nrow(triplets.blogs[pcum.amount < 90])))
+```
+
+
+## Application plans
+Our main goal is to create application that can predict next word from some previous input or without it.
+
+1. Create word dictionaries for each data sets, so we can use appropriate dictionary depending on application;
+
+2. Create word pairs (bi-grams) dictionary to predict next word by previous for each data set;
+
+3. Create word triplets (tri-grams) dictionary to predict next word by previous two for each data set;
+
+4. Cut dictionaries to sizes that allow fast response in predicting, also it'll help to get rid of profanity.
+
+5. If we can get current user application - use appropriate dictionary or mix them for all unknown applications.
+
+## Advanced details
+Here we provide some technical details. 
+
+### External packages and functions
+This report uses some external packages:
+```{r, eval=FALSE}
+suppressPackageStartupMessages(require(data.table))
+suppressPackageStartupMessages(require(RWeka))
+```
+
+### Obtaining data
+The data for this project can be obtained from https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip:
+```{r}
+if (!file.exists("data/")) {
+    dir.create("data") # create data directory
+}
+
+if (!file.exists("data/data.zip")) {
+    download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", "data/data.zip", method = "curl") # download file as we have no
+}
+
+if (!file.exists("data/en_US")) {
+    unzip("data/data.zip", exdir = "data") # unzip files
+}
+```
+
+### Loading data
+The data provided is quite big and loading it in R can take a lot of time:
+```{r}
+transform(file.info(list.files("data/final/en_US/", full.names = T))[, "size", drop = FALSE], size = paste0(round(size / 1024 / 1024, 2), "MB"))
+```
+
+Loading:
+```{r, eval=FALSE}
+suppressWarnings(twitter <- readLines("data/final/en_US/en_US.twitter.txt"))
+suppressWarnings(blogs <- readLines("data/final/en_US/en_US.blogs.txt"))
+suppressWarnings(news <- readLines("data/final/en_US/en_US.news.txt"))
+```
+
+### Processing lines
+This function used to process lines. 
+```{r, eval=FALSE}
+processTexts <- function(texts) {
+    # We'll process not a whole text lines, but sentencies. 
+    # Just before dividing lines by sentencies we want to exclude text in brackets as different sentencies.
+    # I think that text in bracket can be out of context and can't be used in predicting by previous words. 
+    texts <- c(gsub("[(].+?[)]", "", texts), regmatches(texts, regexpr("[(].+?[)]", texts)))
+    
+    # Divide lines to sentencies:
+    texts <- unlist(strsplit(texts, "[!.?]"))
+    
+    #Exclude punctuation as it'll not help in predicting:
+    texts <- gsub("\\]", " ", gsub("\\[", " ", gsub("[…|•“”!\"#&$%\\(\\)*+./:;<=>?@^_`\\{|\\}~,/\\-]", " ", texts)))
+    
+    #We don't want to predict numbers, but we can gain additional prediction power using placeholder for all numbers:
+    texts <- gsub("[0-9]+", " [number] ", texts)
+
+    # Clear whitespaces:
+    texts <- gsub("[ ]{2, }", " ", texts)
+    
+    texts
+}
+```
+
+
+### System information
+This report can be rebuilt using this environment:
+```{r}
+sessionInfo()
+```
+
+
+
